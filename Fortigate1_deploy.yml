@@ -1,0 +1,118 @@
+# Pipeline for Deploying Management Groups and Hierarchy
+name: Fortigate-Deploy
+trigger: none
+
+
+pr: none
+variables:
+  - group: GLZ-Connectivity-Pipeline-VG
+  
+pool: Adani-GLZ-pool
+
+
+stages:
+  - stage: TerraformDeploy
+    displayName: "Terraform Deployment"
+    jobs:
+    - job: DeployTF
+      steps: 
+      - task: Bash@3
+        displayName: TerraformInit
+        inputs:
+          targetType: 'inline'
+          script: |
+              echo $SA_NAME
+              export ARM_USE_MSI=true
+              terraform init \
+              -backend-config="resource_group_name=${RG_NAME}" \
+              -backend-config="storage_account_name=${SA_NAME}" \
+              -backend-config="container_name=${CONT_NAME}" \
+              -backend-config="key=fortinet/fortinet_vm1.tfstate" \
+              -backend-config="subscription_id=${SUB_ID}" \
+              -backend-config="tenant_id=${TEN_ID}"
+          workingDirectory: '$(System.DefaultWorkingDirectory)/pipelines/Fortigate'
+        env:
+            RG_NAME: $(conn_state_file_resource_group_name)
+            SA_NAME: $(conn_state_file_storage_account)
+            CONT_NAME: $(forti_state_file_container)
+            SUB_ID: $(conn_backend_subscription_id)
+            TEN_ID: $(conn_backend_tenant_id)
+      - task: Bash@3
+        displayName: TerraformPlan
+        inputs:
+          targetType: 'inline'
+          script: |
+              ls -ltrh
+              export ARM_USE_MSI=true
+              terraform plan -var-file fortinet_vm1.tfvars -out fortinet_vm1.tfplan
+          workingDirectory: '$(System.DefaultWorkingDirectory)/pipelines/Fortigate'    
+        env:
+          ARM_SUBSCRIPTION_ID: $(conn_subscription_id)
+          ARM_TENANT_ID: $(conn_tenant_id) 
+        
+
+      # - task: ManualValidation@0
+      #   timeoutInMinutes: 60
+      #   inputs:
+      #       notifyUsers: 'mukund.bajaj@adani.com'
+      # - task: Bash@3
+      #   displayName: TerraformApply
+      #   inputs:
+      #     targetType: 'inline'
+      #     script: |
+      #       export ARM_USE_MSI=true
+      #       terraform apply panoramavm.tfplan
+      #   env:
+      #     ARM_SUBSCRIPTION_ID: ${{ variables.conn_subscription_id }}
+      #     ARM_TENANT_ID: ${{ variables.conn_tenant_id }}     
+      #     workingDirectory: $(System.DefaultWorkingDirectory)      
+  - stage: ManualApproval
+    displayName: "Approval Required for Apply"
+    dependsOn: TerraformDeploy
+    jobs:
+       - job: Modules
+         displayName: Approval for VMSS Module Deployment
+         pool: server
+         steps: 
+         - task: ManualValidation@0
+           timeoutInMinutes: 60
+           inputs:
+            notifyUsers: 'ppatt@adani.com'
+       - job: TFApply2
+         displayName: "TF Apply"
+         pool: Adani-GLZ-pool
+         dependsOn: Modules
+         steps:
+         - task: Bash@3
+           displayName: TerraformInit
+           inputs:
+            targetType: 'inline'
+            script: |
+                  echo $SA_NAME
+                  export ARM_USE_MSI=true
+                  terraform init \
+                  -backend-config="resource_group_name=${RG_NAME}" \
+                  -backend-config="storage_account_name=${SA_NAME}" \
+                  -backend-config="container_name=${CONT_NAME}" \
+                  -backend-config="key=fortinet/fortinet_vm1.tfstate" \
+                  -backend-config="subscription_id=${SUB_ID}" \
+                  -backend-config="tenant_id=${TEN_ID}"
+            workingDirectory: '$(System.DefaultWorkingDirectory)/pipelines/Fortigate'
+           env:
+                RG_NAME: $(conn_state_file_resource_group_name)
+                SA_NAME: $(conn_state_file_storage_account)
+                CONT_NAME: $(forti_state_file_container)
+                SUB_ID: $(conn_backend_subscription_id)
+                TEN_ID: $(conn_backend_tenant_id)
+         - task: Bash@3
+           displayName: TerraformApply
+           inputs:
+              targetType: 'inline'
+              script: |
+                  ls -ltrh
+                  export ARM_USE_MSI=true
+                  terraform apply --auto-approve -var-file fortinet_vm1.tfvars
+              workingDirectory: '$(System.DefaultWorkingDirectory)/pipelines/Fortigate'    
+           env:
+              ARM_SUBSCRIPTION_ID: $(conn_subscription_id)
+              ARM_TENANT_ID: $(conn_tenant_id)     
